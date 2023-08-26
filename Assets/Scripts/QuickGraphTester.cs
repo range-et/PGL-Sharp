@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using QuikGraph;
+using TreeEditor;
 
 public class TestScript : MonoBehaviour
 {
@@ -22,9 +23,16 @@ public class TestScript : MonoBehaviour
         TestGraph.AddEdge(new Edge<int>(3, 1));
         TestGraph.AddEdge(new Edge<int>(3, 2));
 
+        Debug.Log("_____________________");
         foreach (var edge in TestGraph.Edges)
         {
             Debug.Log(edge.Source + "->" + edge.Target);
+        }
+
+        Debug.Log("_____________________");
+        foreach (var node in TestGraph.Vertices)
+        {
+            Debug.Log(node);
         }
     }
 
