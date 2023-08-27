@@ -1,8 +1,16 @@
+/////////////////////////////////////////////
+/// The general philosophy is that you can addd this 
+/// Script to any project and then move around elements
+/// Please Note: To do so I've done a bumch of Shenanigans that I 
+/// dont neccesarily recommmend, but it works for me
+/////////////////////////////////////////////
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using QuikGraph;
+using System.Threading.Tasks;
 
 public class PGL
 {
@@ -17,22 +25,27 @@ public class PGL
         return VersionNumber;
     }
 
-    // This is a wrapper class that wraps up a quik graph graph and then 
-    // Stores like the position of the vertices, edges etc etc on there
+
     /// <summary>
-    /// This is the unity wrapper around the PGL#
+    /// This is a wrapper class that wraps up a quik graph graph and then 
+    /// Stores like the position of the vertices, edges etc etc on there
     /// </summary>
     public class GraphDrawer<T>
     {
         // graph drawing objects - this essetially stores the line and position maps associated with the graph
-        private Dictionary<int, Vector3> positionMap = new Dictionary<int, Vector3>();
-        private Dictionary<int, Drawing.Line> lineMap = new Dictionary<int, Drawing.Line>();
+        private Dictionary<string, Vector3> positionMap = new Dictionary<string, Vector3>();
+        private Dictionary<string, Drawing.Line> lineMap = new Dictionary<string, Drawing.Line>();
         // a dictionary that contains the original mapping of the vertices and the corresponding index that is 
-        private Dictionary<int, T> vertexMap = new Dictionary<int, T>();
         // being registered and stored on the index map
+        private Dictionary<string, T> vertexMap = new Dictionary<string, T>();
+        // the quick graph graph
         private AdjacencyGraph<T, Edge<T>> graph = new AdjacencyGraph<T, Edge<T>>();
-        public float bounds = 10; // 10 is the defaut value
-        private GameObject masterGameObject;
+        // a couple of gameobjects that have the vertex data in them
+        private GameObject verticesGameObject;
+        private GameObject edgesGameObject;
+        private float bounds;
+        // a dictionary of things that are curretly animating 
+        private Dictionary<string, bool> currentAnimationMap = new Dictionary<string, bool>();
 
         public GraphDrawer(float bounds)
         {
@@ -40,10 +53,12 @@ public class PGL
             this.bounds = bounds;
             // create like a master gameObject so that all things like lines
             // and vertices are all added to that gameobject
-            masterGameObject = CreateUniqueGraphDrawingObject();
-            // Debug log 
-            Debug.Log(masterGameObject.name);
+            CreateUniqueGraphDrawingObject();
         }
+
+        //////////////////////////////////////////
+        ////// General unity methods like adding in a prefab etc etc that have to be done
+        //////////////////////////////////////////
 
         /// <summary>
         /// An initializing function, this declares a gameobject inside which are 
@@ -52,42 +67,22 @@ public class PGL
         /// </summary>
         /// <param name="objectName"></param>
         /// <returns></returns>
-        private GameObject CreateUniqueGraphDrawingObject(string objectName = null)
+        private void CreateUniqueGraphDrawingObject(string objectName = null)
         {
             string uniqueID = Guid.NewGuid().ToString();
 
             GameObject newObject = new GameObject(objectName ?? "Object_" + uniqueID);
 
-            GameObject verticesObject = new GameObject("Verties");
-            GameObject edgesObject = new GameObject("Edges");
+            verticesGameObject = new GameObject("Verties");
+            edgesGameObject = new GameObject("Edges");
 
-            verticesObject.transform.SetParent(newObject.transform);
-            edgesObject.transform.SetParent(newObject.transform);
-
-            return newObject;
+            verticesGameObject.transform.SetParent(newObject.transform);
+            edgesGameObject.transform.SetParent(newObject.transform);
         }
 
         ///////////////////////////////////
         // General Graph methods like adding an edge / Deleteing an edge etc
         ///////////////////////////////////
-
-        static string DictionaryToString<TKey, TValue>(Dictionary<TKey, TValue> dictionary)
-        {
-            List<string> keyValuePairs = new List<string>();
-            foreach (var kvp in dictionary)
-            {
-                keyValuePairs.Add($"{kvp.Key}: {kvp.Value}");
-            }
-
-            return string.Join(", ", keyValuePairs);
-        }
-
-        public void GetMaps()
-        {
-            Debug.Log(DictionaryToString(positionMap));
-            Debug.Log(DictionaryToString(lineMap));
-            Debug.Log(DictionaryToString(vertexMap));
-        }
 
         /// <summary>
         /// Find the corresponding vertex in a graph
@@ -111,12 +106,12 @@ public class PGL
             }
         }
 
-        public void GetMapIndex(T vertex, out bool success, out int VertexIndex)
+        public void GetMapIndex(T vertex, out bool success, out string VertexIndex)
         {
-            VertexIndex = -1;
+            VertexIndex = default;
             success = false;
 
-            foreach(KeyValuePair<int, T> kvp in vertexMap)
+            foreach(KeyValuePair<string, T> kvp in vertexMap)
             {
                 if(kvp.Value.Equals(vertex)) 
                 {
@@ -132,18 +127,23 @@ public class PGL
         /// </summary>
         /// <param name="vertex"></param>
         /// <returns></returns>
-        public bool AddVertex(T vertex)
+        public async void AddVertex(T vertex, GameObject vertexObject)
         {
             // try adding a vertex to the graph
             bool result = graph.AddVertex(vertex);
             // this returns true if the operation was sucessful
             if (result)
             {
-                positionMap[graph.VertexCount] = Drawing.randomPosition(bounds);
-                vertexMap[graph.VertexCount] = vertex;
+                // Generate a new name for the vertex
+                string uniqueID = Guid.NewGuid().ToString();
+                Vector3 position = Drawing.randomPosition(bounds);
+                positionMap[uniqueID] = position;
+                vertexMap[uniqueID] = vertex;
                 // then add the mesh to the screen (remember that the mesh kinda lerps in)
+                GameObject vobj = GameObject.Instantiate(vertexObject, position, Quaternion.identity, verticesGameObject.transform);
+                vobj.name = uniqueID;
+                await Animations.ScaleUpAnimation(vobj.transform, 2.0f);
             }
-            return result;
         }
 
         /// <summary>
@@ -157,28 +157,46 @@ public class PGL
             bool result = graph.AddEdge(edge);
             if (result)
             {
-                int startIndex;
+                // Generate a new name for the edge
+                string uniqueID = Guid.NewGuid().ToString();
+                string startIndex;
                 bool startFound;
                 GetMapIndex(edge.Source, out startFound, out startIndex);
 
-                int endIndex;
+                string endIndex;
                 bool endFound;
                 GetMapIndex(edge.Source, out endFound, out endIndex);
 
                 // First get the relevant start and end points
                 Drawing.Line line = new Drawing.Line();
                 line.ConstructLineDistance(positionMap[startIndex], positionMap[endIndex], distance);
-                lineMap[graph.EdgeCount] = line;
+                lineMap[uniqueID] = line;
 
             }
             return result;
         }
+
+        // Delete vertex 
+        public void DeleteVertex(T vertex)
+        {
+            bool result = graph.RemoveVertex(vertex);
+            if (result)
+            {
+                // find the relevant vertex index
+                // Delete that vertex index 
+
+            }
+        }
+
+        // Delete Edge
     }
 
-    // This is the main drawing class 
-    // This has the stuff like the notion of a line 
-    // (Points are directly borrowed from the Vector3 representation in Unity)
-    public class Drawing
+    /// <summary>
+    /// This is the main drawing class 
+    /// This has the stuff like the notion of a line 
+    /// (Points are directly borrowed from the Vector3 representation in Unity)
+    /// </summary>
+    private class Drawing
     {
         // And there is a line class that stores a list of points in it
         // Again Points are vectors in this method
@@ -273,6 +291,10 @@ public class PGL
         }
     }
 
+    /// <summary>
+    /// Since simulations are easier to handle as time events it makes sense to pass in a position
+    /// Map or an edge map and have that updated by the simulator instead of doing it any other way
+    /// </summary>
     public class Simulation
     {
         // Fruchterman-Reingold (Kamada Kawai modified)
@@ -289,6 +311,62 @@ public class PGL
             // a private simulation matrix / 3d grod that stores all the points
             
             // calculate an iteration of that
+        }
+    }
+
+    /// <summary>
+    /// These are some utility methods that I use here and there like coverting a dictionary to 
+    /// A string etc cause I need to sometimes
+    /// </summary>
+    private class Utility
+    {
+        public static string DictionaryToString<TKey, TValue>(Dictionary<TKey, TValue> dictionary)
+        {
+            List<string> keyValuePairs = new List<string>();
+            foreach (var kvp in dictionary)
+            {
+                keyValuePairs.Add($"{kvp.Key}: {kvp.Value}");
+            }
+
+            return string.Join(", ", keyValuePairs);
+        }
+    }
+
+    /// <summary>
+    /// This is a class of animations 
+    /// this is the sketchy part since this happens on a parallel thread so if unity freezes the animations
+    /// look erratic, but this is the only way to do so that I know of to run animations without using mono
+    /// </summary>
+    private class Animations
+    {
+        //////////////////////////////////////////
+        //////////// These are the animation methods 
+        //////////////////////////////////////////
+        /// <summary>
+        /// Animate the vertices being spawned in
+        /// </summary>
+        /// <typeparam name="TKey"></typeparam>
+        /// <typeparam name="TValue"></typeparam>
+        /// <param name="dictionary"></param>
+        public static async Task ScaleUpAnimation(Transform targetTransform, float scaleDuration)
+        {
+            Vector3 initialScale = Vector3.zero;
+            Vector3 targetScale = targetTransform.localScale;
+
+            float startTime = Time.time;
+            float elapsedTime = 0.0f;
+
+            while (elapsedTime < scaleDuration)
+            {
+                float normalizedTime = elapsedTime / scaleDuration;
+                targetTransform.localScale = Vector3.Lerp(initialScale, targetScale, normalizedTime);
+
+                await Task.Yield();
+
+                elapsedTime = Time.time - startTime;
+            }
+
+            targetTransform.localScale = targetScale; // Ensure final scale
         }
     }
 }
