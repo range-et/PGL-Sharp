@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using QuikGraph;
 using System.Threading.Tasks;
+using UnityEngine.UIElements;
 
 public class PGL
 {
@@ -38,14 +39,13 @@ public class PGL
         // a dictionary that contains the original mapping of the vertices and the corresponding index that is 
         // being registered and stored on the index map
         private Dictionary<string, T> vertexMap = new Dictionary<string, T>();
+        private Dictionary<string, (string, string)> edgeMap = new Dictionary<string, (string, string)>();
         // the quick graph graph
         private AdjacencyGraph<T, Edge<T>> graph = new AdjacencyGraph<T, Edge<T>>();
         // a couple of gameobjects that have the vertex data in them
         private GameObject verticesGameObject;
         private GameObject edgesGameObject;
         private float bounds;
-        // a dictionary of things that are curretly animating 
-        private Dictionary<string, bool> currentAnimationMap = new Dictionary<string, bool>();
 
         public GraphDrawer(float bounds)
         {
@@ -106,7 +106,7 @@ public class PGL
             }
         }
 
-        public void GetMapIndex(T vertex, out bool success, out string VertexIndex)
+        public void GetVertexMapIndex(T vertex, out bool success, out string VertexIndex)
         {
             VertexIndex = default;
             success = false;
@@ -116,6 +116,22 @@ public class PGL
                 if(kvp.Value.Equals(vertex)) 
                 {
                     VertexIndex = kvp.Key;
+                    success = true;
+                    break;
+                }
+            }
+        }
+
+        public void GetEdgeMapIndex(string start, string end, out bool success, out string EdgeIndex)
+        {
+            EdgeIndex = default;
+            success = false;
+
+            foreach(KeyValuePair<string, (string, string)> kvp in edgeMap)
+            {
+                if (kvp.Value.Equals((start, end)))
+                {
+                    EdgeIndex = kvp.Key;
                     success = true;
                     break;
                 }
@@ -152,7 +168,7 @@ public class PGL
         /// <param name="edge"></param>
         /// <param name="divisions"></param>
         /// <returns></returns>
-        public bool AddEdge(Edge<T> edge, float distance)
+        public async void AddEdge(Edge<T> edge, float distance, float width, Color lineColor)
         {
             bool result = graph.AddEdge(edge);
             if (result)
@@ -161,34 +177,94 @@ public class PGL
                 string uniqueID = Guid.NewGuid().ToString();
                 string startIndex;
                 bool startFound;
-                GetMapIndex(edge.Source, out startFound, out startIndex);
+                GetVertexMapIndex(edge.Source, out startFound, out startIndex);
 
                 string endIndex;
                 bool endFound;
-                GetMapIndex(edge.Source, out endFound, out endIndex);
+                GetVertexMapIndex(edge.Target, out endFound, out endIndex);
 
                 // First get the relevant start and end points
                 Drawing.Line line = new Drawing.Line();
                 line.ConstructLineDistance(positionMap[startIndex], positionMap[endIndex], distance);
                 lineMap[uniqueID] = line;
 
+                // Add the mesh representation of the edge
+                // create the game object
+                GameObject lineObject = new GameObject(uniqueID);
+                lineObject.transform.SetParent(edgesGameObject.transform);
+                edgeMap[uniqueID] = (startIndex, endIndex);
+
+                // Attach a line renderer component 
+                LineRenderer lineRenderer = lineObject.AddComponent<LineRenderer>();
+                lineRenderer.startWidth = width;
+                lineRenderer.endWidth = width;
+                lineRenderer.startColor = lineColor;
+                lineRenderer.endColor = lineColor;
+
+                // Actually draw the line
+                lineRenderer.positionCount = line.points.Count;
+                for (int i = 0; i < line.points.Count; i++)
+                {
+                    lineRenderer.SetPosition(i, line.points[i]);
+                }
+
+                // Apply the right material to it 
+                Material whiteDiffuseMat = new Material(Shader.Find("Unlit/Texture"));
+                lineRenderer.material = whiteDiffuseMat;
+
+                // Start the process of thickening the line
+                await Animations.ChangeLineWidthOverTime(0, width, 2f, lineRenderer);
             }
-            return result;
         }
 
         // Delete vertex 
-        public void DeleteVertex(T vertex)
+        public async void DeleteVertex(T vertex)
         {
             bool result = graph.RemoveVertex(vertex);
             if (result)
             {
                 // find the relevant vertex index
+                string vertexIndex;
+                bool vertexFound;
+                GetVertexMapIndex(vertex, out vertexFound, out vertexIndex);
                 // Delete that vertex index 
-
+                vertexMap.Remove(vertexIndex);
+                // First get the cube 
+                GameObject obj = verticesGameObject.transform.Find(vertexIndex).gameObject;
+                // remove the cube form the scene 
+                // schedule its deletion
+                Utility.DeleteObjectWithDelay(3f, obj);
+                // then scale it down
+                await Animations.ScaleDownAnimation(obj.transform, 2f);
             }
         }
 
         // Delete Edge
+        public async void DeleteEdge(Edge<T> edge)
+        {
+            string startIndex;
+            bool startFound;
+            GetVertexMapIndex(edge.Source, out startFound, out startIndex);
+
+            string endIndex;
+            bool endFound;
+            GetVertexMapIndex(edge.Target, out endFound, out endIndex);
+
+            // then delete that edge
+            string edgeIndex;
+            bool edgeFound;
+
+            GetEdgeMapIndex(startIndex, endIndex, out edgeFound, out edgeIndex);
+            edgeMap.Remove(edgeIndex);
+            GameObject obj = edgesGameObject.transform.Find(edgeIndex).gameObject;
+            graph.RemoveEdge(edge);
+            // schedule its deletion
+            Utility.DeleteObjectWithDelay(3f, obj);
+            // then scale it down
+            LineRenderer lineRenderer = obj.GetComponent<LineRenderer>();
+            await Animations.ChangeLineWidthOverTime(lineRenderer.startWidth, 0, 2f, lineRenderer);
+            
+        }
     }
 
     /// <summary>
@@ -204,6 +280,19 @@ public class PGL
         {
             public List<Vector3> points = new List<Vector3>();
 
+            public override string ToString()
+            {
+                List<string> formattedList = new List<string>();
+                foreach (Vector3 vector in points)
+                {
+                    string formattedVector = string.Format("[{0}, {1}, {2}]", vector.x, vector.y, vector.z);
+                    formattedList.Add(formattedVector);
+                }
+
+                string itemsString = "[" + string.Join(", ", formattedList) + "]";
+                return itemsString;
+            }
+
             /// <summary>
             /// This creates the line thing, the reason for this is so that once a 
             /// Line is made there is no need to delete it, we can keep it and then keep modifying 
@@ -216,7 +305,7 @@ public class PGL
             {
                 points.Clear();
                 float lerpfraction;
-                for (int i = 0; i < divisions; i++)
+                for (int i = 0; i <= divisions; i++)
                 {
                     // calculate the fraction between the two points 
                     lerpfraction = (float)i / divisions;
@@ -234,7 +323,7 @@ public class PGL
             /// <param name="distance"></param>
             public void ConstructLineDistance(Vector3 start, Vector3 end, float distance)
             {
-                int numberOfDivisions = (int)Math.Ceiling(Vector3.Distance(start, end)/distance);
+                int numberOfDivisions = (int)Math.Ceiling(Vector3.Distance(start, end)/distance) + 1;
                 ConstructLineDivisions(start, end, numberOfDivisions);
             }
         }
@@ -330,6 +419,16 @@ public class PGL
 
             return string.Join(", ", keyValuePairs);
         }
+
+        public static async void DeleteObjectWithDelay(float deletionDelay, GameObject obj)
+        {
+            await System.Threading.Tasks.Task.Delay((int)(deletionDelay * 1000));
+
+            if (obj != null)
+            {
+                PGLUnityMethods.Destroy(obj);
+            }
+        }
     }
 
     /// <summary>
@@ -368,5 +467,62 @@ public class PGL
 
             targetTransform.localScale = targetScale; // Ensure final scale
         }
+
+        public static async Task ScaleDownAnimation(Transform targetTransform, float scaleDuration)
+        {
+            Vector3 initialScale = targetTransform.localScale;
+            Vector3 targetScale = Vector3.zero;
+
+            float startTime = Time.time;
+            float elapsedTime = 0.0f;
+
+            while (elapsedTime < scaleDuration)
+            {
+                float normalizedTime = elapsedTime / scaleDuration;
+                targetTransform.localScale = Vector3.Lerp(initialScale, targetScale, normalizedTime);
+
+                await Task.Yield();
+
+                elapsedTime = Time.time - startTime;
+            }
+
+            targetTransform.localScale = targetScale; // Ensure final scale
+        }
+
+        public static async Task ChangeLineWidthOverTime(float initialWidth, float targetWidth, float widthChangeDuration, LineRenderer lineRenderer)
+        {
+            float startTime = Time.time;
+            float initialStartWidth = initialWidth;
+
+            while (Time.time - startTime < widthChangeDuration)
+            {
+                float elapsedTime = Time.time - startTime;
+                float normalizedTime = elapsedTime / widthChangeDuration;
+
+                initialWidth = Mathf.Lerp(initialStartWidth, targetWidth, normalizedTime);
+
+                lineRenderer.startWidth = initialWidth;
+                lineRenderer.endWidth = initialWidth;
+
+                await Task.Yield();
+            }
+
+            // Ensure final line width
+            initialWidth = targetWidth;
+            lineRenderer.startWidth = initialWidth;
+            lineRenderer.endWidth = initialWidth;
+        }
     }
 }
+
+public class PGLUnityMethods:MonoBehaviour
+{
+    /// <summary>
+    /// This deletes a gameobject from unity
+    /// </summary>
+    /// <param name="obj"></param>
+    public static void DeleteObject(GameObject obj)
+    {
+        Destroy(obj);
+    }
+} 

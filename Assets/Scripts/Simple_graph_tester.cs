@@ -3,7 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using QuikGraph;
-using Unity.VisualScripting;
 
 public class Simple_graph_tester : MonoBehaviour
 {
@@ -16,10 +15,9 @@ public class Simple_graph_tester : MonoBehaviour
         new thingy("E", "Vertex E"),
         new thingy("F", "Vertex F") };
     PGL.GraphDrawer<thingy> graph;
+    private Edge<thingy> edgeToDelete;
     
-    
-    
-    
+
     void Awake()
     {
         graph = new PGL.GraphDrawer<thingy>(10);
@@ -44,9 +42,16 @@ public class Simple_graph_tester : MonoBehaviour
         graph.AddVertex(thingy3, playerPrefab);
 
         // Add the edges now 
-        graph.AddEdge(new Edge<thingy>(thingy1, thingy2), 1);
-        graph.AddEdge(new Edge<thingy>(thingy2, thingy3), 1);
-        graph.AddEdge(new Edge<thingy>(thingy3, thingy1), 1);
+        Edge<thingy> edge1 = new Edge<thingy>(thingy1, thingy2);
+        Edge<thingy> edge2 = new Edge<thingy>(thingy2, thingy3);
+        Edge<thingy> edge3 = new Edge<thingy>(thingy3, thingy1);
+        edgeToDelete = edge3;
+
+        graph.AddEdge(edge1, 1, 0.1f, new Color(255,0,0));
+        graph.AddEdge(edge2, 1, 0.1f, new Color(255,0,0));
+        graph.AddEdge(edge3, 1, 0.1f, new Color(255,0,0));
+
+        StartCoroutine(ExecuteAfterDelay(4.0f));
     }
 
     // Update is called once per frame
@@ -56,8 +61,16 @@ public class Simple_graph_tester : MonoBehaviour
         {
             graph.AddVertex(thingys[counter], playerPrefab);
             counter++;
-        }
-        
+        }        
+    }
+
+    private IEnumerator ExecuteAfterDelay(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+
+        graph.DeleteVertex(thingys[2]);
+        graph.DeleteEdge(edgeToDelete);
+        Debug.Log("Deleted the thing!");
     }
 }
 
